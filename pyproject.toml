@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "catboost>=1.2.8",
-    "hopsworks[python]>=4.6.2",
+    "hopsworks[python]==4.2.*",
     "ipykernel>=7.1.0",
     "joblib>=1.5.3",
     "jupyter>=1.1.1",
@@ -14,7 +14,7 @@ dependencies = [
     "matplotlib>=3.10.8",
     "numba>=0.61.0",
     "numpy<2.0",
-    "pandas>=2.3.3",
+    "pandas<2.2.0",
     "prophet>=1.2.1",
     "pyarrow>=23.0.0",
     "python-dotenv>=1.2.1",

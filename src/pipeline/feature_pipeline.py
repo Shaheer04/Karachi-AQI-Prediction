@@ -300,7 +300,8 @@ def push_to_hopsworks(df):
             primary_key=["datetime_id"], 
             event_time="datetime_utc",
             description="AQI data for Karachi with engineered features",
-            online_enabled=True
+            online_enabled=True,
+            time_travel_format="HUDI"
         )
         
         print("Inserting data into Feature Group...")

@@ -67,7 +67,11 @@ def training_pipeline():
 
     print("Fetching training data...")
     # Fetch all data and split manually to ensure chronological order
-    df, _ = feature_view.training_data(description="All data")
+    features_df, labels_df = feature_view.training_data(description="All data")
+    df = pd.concat([features_df, labels_df], axis=1)
+
+    # Ensure datetime is in correct format
+    df['datetime_utc'] = pd.to_datetime(df['datetime_utc'])
     
     # Sort by time
     df = df.sort_values(by="datetime_utc")
