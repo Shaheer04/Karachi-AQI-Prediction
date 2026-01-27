@@ -2,12 +2,13 @@ import streamlit as st
 import requests
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from datetime import datetime
 import time
 
 # --- Configuration & Constants ---
-PAGE_TITLE = "Karachi AQI Predictor"
-PAGE_ICON = "🍃"
+PAGE_TITLE = "Karachi AQI Predictor Pro"
+PAGE_ICON = "⚡"
 API_URL = "http://localhost:8000/predict"
 
 st.set_page_config(
@@ -17,323 +18,290 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- Custom CSS (The "Premium" Dark Look) ---
+# --- Custom CSS (Premium Dark Mode) ---
 def setup_css():
     st.markdown("""
     <style>
-        /* Import a nice Google Font */
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap');
 
         html, body, [class*="css"] {
-            font-family: 'Inter', sans-serif;
-            color: #e2e8f0; /* Light Slate */
-            background-color: #0f172a; /* Slate 900 */
+            font-family: 'Outfit', sans-serif;
+            color: #e2e8f0;
+            background-color: #0f172a;
         }
-
-        /* Gradient Background for the main app */
+        
+        /* Modern Gradient Background */
         .stApp {
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            background: radial-gradient(circle at top left, #1e293b, #0f172a);
         }
 
-        /* Custom Card Styling */
+        /* Glassmorphism Cards */
         .metric-card {
-            background-color: #1e293b; /* Slate 800 */
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
-            border: 1px solid #334155; /* Slate 700 */
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: transform 0.3s ease;
         }
         .metric-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
-            border-color: #475569;
+            transform: translateY(-5px);
+            border-color: rgba(56, 189, 248, 0.5);
         }
 
-        /* Headings */
-        h1, h2, h3, h4, h5, h6 {
-            color: #f8fafc !important;
-            font-weight: 700;
-        }
-        
-        /* Custom Button Styling */
-        div.stButton > button {
-            background: linear-gradient(to right, #0ea5e9, #0284c7);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            padding: 0.75rem 1.5rem;
-            font-weight: 600;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-            transition: all 0.2s;
-            width: 100%;
-        }
-        div.stButton > button:hover {
-            background: linear-gradient(to right, #0284c7, #0369a1);
-            box-shadow: 0 6px 8px rgba(0, 0, 0, 0.4);
-            transform: translateY(-1px);
-        }
-        div.stButton > button:active {
-            color: white; /* Keep text white on click */
-        }
-
-        /* Divider */
-        hr {
-            margin: 2rem 0;
-            border-color: #334155;
-        }
-
-        /* Tooltip help icons */
-        .tooltip-icon {
-            color: #94a3b8;
-            font-size: 0.9em;
-            cursor: help;
-        }
-        
-        /* AQI Label badges */
-        .aqi-badge {
+        /* Badge Styling */
+        .badge {
             display: inline-block;
-            padding: 4px 12px;
+            padding: 6px 16px;
             border-radius: 9999px;
             font-weight: 600;
-            font-size: 0.85rem;
-            color: white;
-            text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+            font-size: 0.9rem;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
         }
 
-        /* Streamlit Text Elements */
-        .stMarkdown p {
-            color: #cbd5e1; /* Slate 300 */
+        /* Loaders */
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 4px solid #3498db;
+            width: 40px;
+            height: 40px;
+            -webkit-animation: spin 1s linear infinite; /* Safari */
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
         }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
     </style>
     """, unsafe_allow_html=True)
 
 # --- Helpers ---
-def get_aqi_category_details(aqi):
-    if aqi <= 50: return "Good", "#22c55e", "Air quality is satisfactory, and air pollution poses little or no risk."
-    elif aqi <= 100: return "Moderate", "#eab308", "Air quality is acceptable. However, there may be a risk for some people, particularly those who are unusually sensitive to air pollution."
-    elif aqi <= 150: return "Unhealthy for Sensitive Groups", "#f97316", "Members of sensitive groups may experience health effects. The general public is less likely to be affected."
-    elif aqi <= 200: return "Unhealthy", "#ef4444", "Some members of the general public may experience health effects; members of sensitive groups may experience more serious health effects."
-    elif aqi <= 300: return "Very Unhealthy", "#a855f7", "Health alert: The risk of health effects is increased for everyone."
-    else: return "Hazardous", "#7f1d1d", "Health warning of emergency conditions: everyone is more likely to be affected."
+def get_aqi_details(aqi):
+    if aqi <= 50: return "Good", "#22c55e", "Air quality is satisfactory."
+    elif aqi <= 100: return "Moderate", "#eab308", "Air quality is acceptable."
+    elif aqi <= 150: return "Unhealthy for Sensitive Groups", "#f97316", "Sensitive groups should reduce outdoor exertion."
+    elif aqi <= 200: return "Unhealthy", "#ef4444", "Everyone may begin to experience health effects."
+    elif aqi <= 300: return "Very Unhealthy", "#a855f7", "Health warnings of emergency conditions."
+    else: return "Hazardous", "#7f1d1d", "Health warning of emergency conditions."
 
-# --- Views ---
+def fetch_predictions():
+    """Fetches data from API."""
+    try:
+        response = requests.get(API_URL)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return None
+    except:
+        return None
 
-def render_landing():
-    """Renders the initial welcoming state."""
-    
-    # Hero Section
-    col1, col2 = st.columns([3, 2], gap="large")
-    
-    with col1:
-        st.markdown(f"# 🍃 Karachi AQI Predictor")
-        st.markdown("""
-        ### Breathe smarter with AI-powered forecasts.
-        
-        Karachi's air quality changes rapidly. This tool uses advanced machine learning to predict 
-        Air Quality Index (AQI) levels for the next **72 hours** using real-time weather patterns 
-        and historical data.
-        
-        **Why check AQI?**
-        - Plan your outdoor activities.
-        - Protect sensitive family members.
-        - mitigate health risks.
-        """)
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        if st.button("Analyze Current Air Quality", type="primary"):
-            st.session_state['page'] = 'loading'
-            st.rerun()
+# --- Components ---
 
-    with col2:
-        # A nice placeholder graphic or informative card
-        st.markdown("""
-        <div class="metric-card" style="text-align: center;">
-            <div style="font-size: 3rem; margin-bottom: 1rem;">🌫️ ➡️ 🌤️</div>
-            <h4 style="margin:0;">Real-time Analysis</h4>
-            <p style="color: #94a3b8; font-size: 0.9rem;">Connecting to AQI Sensors & Weather APIs</p>
-        </div>
-        <br>
-        <div class="metric-card" style="text-align: center;">
-            <div style="font-size: 3rem; margin-bottom: 1rem;">🤖 + 📊</div>
-            <h4 style="margin:0;">ML Powered</h4>
-            <p style="color: #94a3b8; font-size: 0.9rem;">XGBoost/LightGBM Model Architecture</p>
-        </div>
-        """, unsafe_allow_html=True)
+def render_gauge(value):
+    """Renders a Plotly Gauge chart for AQI."""
+    fig = go.Figure(go.Indicator(
+        mode = "gauge+number",
+        value = value,
+        domain = {'x': [0, 1], 'y': [0, 1]},
+        title = {'text': "Current AQI", 'font': {'size': 24, 'color': '#f8fafc'}},
+        gauge = {
+            'axis': {'range': [None, 500], 'tickwidth': 1, 'tickcolor': "white"},
+            'bar': {'color': "rgba(0,0,0,0)"}, # Hide bar, use needle logic if needed or just threshold
+            'bgcolor': "rgba(0,0,0,0)",
+            'borderwidth': 2,
+            'bordercolor': "#334155",
+            'steps': [
+                {'range': [0, 50], 'color': '#22c55e'},
+                {'range': [50, 100], 'color': '#eab308'},
+                {'range': [100, 150], 'color': '#f97316'},
+                {'range': [150, 200], 'color': '#ef4444'},
+                {'range': [200, 300], 'color': '#a855f7'},
+                {'range': [300, 500], 'color': '#7f1d1d'}
+            ],
+            'threshold': {
+                'line': {'color': "white", 'width': 4},
+                'thickness': 0.75,
+                'value': value
+            }
+        }
+    ))
+    fig.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)',
+        font={'color': "white", 'family': "Outfit"},
+        margin=dict(l=20, r=20, t=50, b=20),
+        height=250
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
-    st.divider()
-    
-    # Educational Footer
-    st.markdown("### How it works")
-    c1, c2, c3 = st.columns(3)
+# --- Main Logic ---
+
+def main():
+    setup_css()
+
+    # --- Header ---
+    c1, c2 = st.columns([3, 1])
     with c1:
-        st.info("**1. Data Collection**\nWe aggregate historical pollution data (PM2.5, NO2) and real-time weather metrics.")
+        st.markdown("# ⚡ Karachi AQI Predictor")
+        st.caption("Advanced AI Forecasting • Powered by Hopsworks & OpenWeather")
     with c2:
-        st.info("**2. ML Inference**\nOur model processes these features to forecast AQI trends for the upcoming days.")
-    with c3:
-        st.info("**3. Actionable Insights**\nWe translate complex numbers into simple categories and health advice.")
-
-
-def render_dashboard():
-    """Renders the main dashboard with predictions."""
-    
-    # Top Bar with Back Button
-    c1, c2 = st.columns([1, 6])
-    with c1:
-        if st.button("← Back"):
+        if st.button("🔄 Refresh"):
             del st.session_state['data']
-            st.session_state['page'] = 'landing'
             st.rerun()
-    with c2:
-        st.markdown("## 📊 Forecast Results")
 
-    data = st.session_state.get('data')
-    if not data:
-        st.error("No data found. Please try again.")
-        return
-
-    hourly_data = data.get("hourly_predictions", [])
-    daily_data = data.get("daily_summary", [])
-
-    if not hourly_data:
-        st.warning("Prediction service returned empty data.")
-        return
-
-    # --- Current Status Highlight ---
-    current = hourly_data[0]
-    curr_aqi = current['predicted_aqi']
-    cat, color, desc = get_aqi_category_details(curr_aqi)
-    
-    st.markdown(f"""
-    <div class="metric-card" style="border-left: 8px solid {color}">
-        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;">
-            <div>
-                <p style="font-size: 0.9rem; color: #94a3b8; margin-bottom: 0;">Right Now ({current['datetime']})</p>
-                <h1 style="font-size: 3.5rem; margin: 0; color: {color};">{curr_aqi:.0f}</h1>
-                <span class="aqi-badge" style="background-color: {color}">{cat}</span>
-                <p style="margin-top: 8px; font-size: 0.9rem; color: #cbd5e1;">PM2.5: <strong>{current.get('pm2_5', 'N/A')} µg/m³</strong></p>
-            </div>
-            <div style="max-width: 600px;">
-                <h3 style="margin-bottom: 0.5rem; color: #f8fafc;">Health Implication</h3>
-                <p style="font-size: 1.05rem; color: #cbd5e1; line-height: 1.5;">{desc}</p>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # --- 3 Day Forecast Cards ---
-    st.subheader("📅 3-Day Outlook")
-    cols = st.columns(len(daily_data))
-    
-    for i, day in enumerate(daily_data):
-        d_avg = day['avg_aqi']
-        d_cat, d_color, _ = get_aqi_category_details(d_avg)
-        d_date = datetime.strptime(day['date'], "%Y-%m-%d").strftime("%A, %b %d")
-        
-        with cols[i]:
-            st.markdown(f"""
-            <div class="metric-card" style="text-align: center; height: 100%;">
-                <h4 style="margin-bottom: 0.5rem; color: #f8fafc;">{d_date}</h4>
-                <div style="font-size: 2rem; font-weight: bold; color: {d_color};">{d_avg:.0f}</div>
-                <div style="margin: 0.5rem 0;">
-                    <span class="aqi-badge" style="background-color: {d_color}; font-size: 0.75rem;">{d_cat}</span>
-                </div>
-                <p style="font-size: 0.85rem; color: #94a3b8; margin: 0;">
-                    Range: {day['min_aqi']:.0f} - {day['max_aqi']:.0f}
-                </p>
+    # --- Loading State (Auto-load) ---
+    if 'data' not in st.session_state:
+        # Cool Loader UI
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.markdown("""
+            <div style="text-align: center;">
+                <div class="loader"></div>
+                <h3 style="margin-top: 20px; color: #38bdf8;">Analyzing Atmosphere...</h3>
+                <p style="color: #94a3b8;">Connecting to Hopsworks Feature Store...</p>
             </div>
             """, unsafe_allow_html=True)
+            
+            # Simulated delay for "coolness" + actual fetch
+            time.sleep(1.5) 
+            data = fetch_predictions()
+            
+            if data:
+                st.session_state['data'] = data
+                st.rerun()
+            else:
+                st.error("❌ Failed to connect to Prediction Service. Is the backend running?")
+                if st.button("Retry Connection"):
+                    st.rerun()
+                st.stop()
 
-    st.markdown("<br>", unsafe_allow_html=True)
+    # --- Dashboard View (Data Loaded) ---
+    data = st.session_state['data']
+    hourly = data.get('hourly_predictions', [])
+    daily = data.get('daily_summary', [])
+    meta = data.get('model_metadata', {})
 
-    # --- Interactive Chart ---
-    st.subheader("📈 72-Hour Trend Analysis")
+    if not hourly:
+        st.error("No prediction data returned.")
+        st.stop()
     
-    df_hourly = pd.DataFrame(hourly_data)
-    df_hourly['datetime'] = pd.to_datetime(df_hourly['datetime'])
+    current = hourly[0]
+    curr_aqi = current['predicted_aqi']
+    curr_pm25 = current.get('pm2_5', 'N/A')
+    cat_name, cat_color, cat_desc = get_aqi_details(curr_aqi)
+
+    # --- Top Section: Status & Gauge ---
+    st.markdown("---")
     
-    # Improved Plotly Chart (Dark Mode)
-    fig = px.line(df_hourly, x='datetime', y='predicted_aqi', 
-                  markers=True, line_shape='spline')
+    col_stat, col_gauge, col_meta = st.columns([2, 2, 1])
+    
+    with col_stat:
+        st.markdown(f"""
+        <div class="metric-card">
+            <h4 style="margin:0; color: #94a3b8;">CURRENT STATUS</h4>
+            <h1 style="font-size: 4rem; color: {cat_color}; margin: 10px 0;">{curr_aqi:.0f}</h1>
+            <span class="badge" style="background-color: {cat_color}; color: white;">{cat_name}</span>
+            <div style="margin-top: 20px;">
+                <p style="font-size: 1.2rem; color: #cbd5e1;">PM2.5: <strong style="color: #38bdf8;">{curr_pm25} µg/m³</strong></p>
+                <p style="font-size: 0.9rem; color: #64748b;">{cat_desc}</p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with col_gauge:
+        # Render Gauge
+        render_gauge(curr_aqi)
+
+    with col_meta:
+        # Model Metadata Card
+        metrics = meta.get('metrics', {})
+        r2 = metrics.get('R2', metrics.get('r2_score', '0.99+')) # Fallback
+        
+        # Round if float
+        if isinstance(r2, float): r2 = f"{r2:.4f}"
+        
+        rmse = metrics.get('RMSE', metrics.get('rmse', 'N/A'))
+        if isinstance(rmse, float): rmse = f"{rmse:.2f}"
+            
+        mae = metrics.get('MAE', metrics.get('mae', 'N/A'))
+        if isinstance(mae, float): mae = f"{mae:.2f}"
+        
+        # Create the HTML string first to keep things clean
+        html_content = (
+            f'<div class="metric-card" style="height: 100%;">'
+            f'<h5 style="color: #94a3b8; margin: 0;">Model Card</h5>'
+            f'<p style="margin: 5px 0; color: #f8fafc; font-size: 1.1rem;"><strong>{meta.get("name", "AQI-Predictor")}</strong></p>'
+            f'<div style="display: flex; justify-content: space-between; margin-top: 15px;">'
+            f'<div style="text-align: center;">'
+            f'<span style="font-size: 0.8rem; color: #64748b; display: block;">R² Score</span>'
+            f'<span style="color: #22c55e; font-size: 1.5rem; font-weight: bold;">{r2}</span>'
+            f'</div>'
+            f'<div style="text-align: center;">'
+            f'<span style="font-size: 0.8rem; color: #64748b; display: block;">RMSE</span>'
+            f'<span style="color: #38bdf8; font-size: 1.5rem; font-weight: bold;">{rmse}</span>'
+            f'</div>'
+            f'</div>'
+            f'<div style="margin-top: 15px; border-top: 1px solid #334155; padding-top: 10px;">'
+            f'<div style="display: flex; justify-content: space-between; align-items: center;">'
+            f'<span style="font-size: 0.8rem; color: #64748b;">MAE</span>'
+            f'<span style="color: #cbd5e1; font-weight: bold;">{mae}</span>'
+            f'</div>'
+            f'<div style="display: flex; justify-content: space-between; align-items: center; margin-top: 5px;">'
+            f'<span style="font-size: 0.8rem; color: #64748b;">Type</span>'
+            f'<span style="color: #cbd5e1; font-size: 0.8rem;">{meta.get("type", "ML").upper()}</span>'
+            f'</div>'
+            f'<div style="display: flex; justify-content: space-between; align-items: center; margin-top: 5px;">'
+            f'<span style="font-size: 0.8rem; color: #64748b;">Ver</span>'
+            f'<span style="color: #64748b; font-size: 0.8rem;">{meta.get("version", "N/A")}</span>'
+            f'</div>'
+            f'</div>'
+            f'</div>'
+        )
+        
+        st.markdown(html_content, unsafe_allow_html=True)
+
+    # --- Chart Section ---
+    st.markdown("### 📈 72-Hour Future Trend")
+    
+    df_chart = pd.DataFrame(hourly)
+    df_chart['datetime'] = pd.to_datetime(df_chart['datetime'])
+    
+    fig = px.area(df_chart, x='datetime', y='predicted_aqi', 
+                  color_discrete_sequence=['#38bdf8'])
     
     fig.update_layout(
         plot_bgcolor='rgba(0,0,0,0)',
         paper_bgcolor='rgba(0,0,0,0)',
-        xaxis_title="Time",
-        yaxis_title="Predicted AQI",
-        hovermode="x unified",
-        margin=dict(l=20, r=20, t=40, b=20),
-        height=400,
-        font=dict(color="#e2e8f0")
+        font={'color': '#94a3b8'},
+        xaxis=dict(showgrid=False),
+        yaxis=dict(showgrid=True, gridcolor='#334155'),
+        margin=dict(l=0, r=0, t=0, b=0),
+        height=350
     )
-    fig.update_traces(line_color='#38bdf8', line_width=3, marker_size=6) # Light Blue line
-    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#334155')
-    fig.update_xaxes(showgrid=False, gridcolor='#334155')
-    
-    # Add colored background zones
-    shapes = [
-        dict(type="rect", xref="paper", yref="y", x0=0, x1=1, y0=0, y1=50, fillcolor="green", opacity=0.1, layer="below", line_width=0),
-        dict(type="rect", xref="paper", yref="y", x0=0, x1=1, y0=50, y1=100, fillcolor="yellow", opacity=0.1, layer="below", line_width=0),
-        dict(type="rect", xref="paper", yref="y", x0=0, x1=1, y0=100, y1=150, fillcolor="orange", opacity=0.1, layer="below", line_width=0),
-        dict(type="rect", xref="paper", yref="y", x0=0, x1=1, y0=150, y1=200, fillcolor="red", opacity=0.1, layer="below", line_width=0),
-        dict(type="rect", xref="paper", yref="y", x0=0, x1=1, y0=200, y1=500, fillcolor="purple", opacity=0.1, layer="below", line_width=0),
-    ]
-    fig.update_layout(shapes=shapes)
-
     st.plotly_chart(fig, use_container_width=True)
 
-
-# --- Main Controller ---
-def main():
-    setup_css()
+    # --- 3 Day Outlook ---
+    st.subheader("📅 3-Day Forecast")
+    c_days = st.columns(len(daily))
     
-    # Initialize Session State
-    if 'page' not in st.session_state:
-        st.session_state['page'] = 'landing'
-    
-    # Logic
-    if st.session_state['page'] == 'landing':
-        render_landing()
+    for i, day in enumerate(daily):
+        d_avg = day['avg_aqi']
+        _, d_color, _ = get_aqi_details(d_avg)
+        d_date = datetime.strptime(day['date'], "%Y-%m-%d").strftime("%a, %d %b")
         
-    elif st.session_state['page'] == 'loading':
-        # Simulated loading screen with messages
-        placeholder = st.empty()
-        with placeholder.container():
-            st.markdown("<br><br>", unsafe_allow_html=True)
-            col1, col2, col3 = st.columns([1,2,1])
-            with col2:
-                with st.spinner("Connecting to Model Registry..."):
-                    time.sleep(0.5)
-                with st.spinner("Fetching Real-time Weather Data..."):
-                    time.sleep(0.5)
-                with st.spinner("Running Inference Models..."):
-                    # Actual API Call
-                    try:
-                        response = requests.get(API_URL)
-                        if response.status_code == 200:
-                            st.session_state['data'] = response.json()
-                            st.session_state['page'] = 'dashboard'
-                            # Rerun to switch views
-                        else:
-                            st.error(f"API Error: {response.text}")
-                            if st.button("Return"):
-                                st.session_state['page'] = 'landing'
-                                st.rerun()
-                            return
-                    except Exception as e:
-                        st.error(f"Connection Failed: {e}")
-                        if st.button("Return"):
-                            st.session_state['page'] = 'landing'
-                            st.rerun()
-                        return
-            
-            st.rerun()
-
-    elif st.session_state['page'] == 'dashboard':
-        render_dashboard()
+        with c_days[i]:
+            st.markdown(f"""
+            <div class="metric-card" style="text-align: center; border-bottom: 4px solid {d_color};">
+                <h4 style="color: #f8fafc;">{d_date}</h4>
+                <div style="font-size: 2rem; font-weight: bold; color: {d_color};">{d_avg:.0f}</div>
+                <p style="color: #94a3b8; font-size: 0.9rem;">Range: {day['min_aqi']:.0f} - {day['max_aqi']:.0f}</p>
+            </div>
+            """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
