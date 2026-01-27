@@ -66,8 +66,28 @@ class AQIPredictionService:
             next_dt = last_dt + pd.Timedelta(hours=i+1)
             
             # --- Prepare Input ---
-            # Create next_row with persisted pollutants
-            next_row = last_row.copy()
+            # Seasonal Persistence Strategy:
+            # Instead of copying the last row (flat persistence), we look back 24 hours.
+            # Air quality has strong daily seasonality (traffic, sun).
+            # We try to find the row in the buffer that corresponds to next_dt - 24h.
+            
+            target_hist_dt = next_dt - timedelta(hours=24)
+            hist_row = None
+            
+            # Search buffer for the historical row (optimized search could be done, linear is fine for small buffer)
+            # Iterate backwards to find it quickly
+            for item in reversed(buffer):
+                if item['datetime_utc'] == target_hist_dt:
+                    hist_row = item
+                    break
+            
+            if hist_row:
+                # Use seasonality for covariates
+                next_row = hist_row.copy()
+            else:
+                # Fallback to simple persistence if 24h history missing (e.g., start of recursion)
+                next_row = last_row.copy()
+
             next_row['datetime_utc'] = next_dt
             
             # Combine buffer + next_row
