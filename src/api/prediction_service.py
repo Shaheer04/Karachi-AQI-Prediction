@@ -119,15 +119,28 @@ class AQIPredictionService:
             # --- Predict ---
             if self.model_type == 'lstm':
                 X_input = X_scaled.values.reshape((1, 1, X.shape[1])).astype(np.float32)
-                # Note: LSTM input shape logic might need adjustment if model expected specific input dim
-                # But here we reshape generically based on X.shape[1]
                 pred_scaled = self.model.predict(X_input, verbose=0)
                 pred_val = self.scaler_y.inverse_transform(pred_scaled).ravel()[0]
             else:
                 pred_scaled = self.model.predict(X_scaled)
                 pred_val = self.scaler_y.inverse_transform(pred_scaled.reshape(-1, 1)).ravel()[0]
             
-            pred_val = max(0, float(pred_val))
+            raw_pred = max(0, float(pred_val))
+            
+            # --- Smoothing Strategy (Weighted Persistence) ---
+            # Blend the model's prediction (History/Seasonality) with the last known value (Current Trend).
+            # This prevents unrealistic jumps (e.g., 48 -> 150 in 1 hour).
+            # Formula: New = (alpha * Model) + ((1-alpha) * Previous)
+            
+            smoothing_factor = 0.3  # Trust model 30% per step, retain recent trend 70%
+            
+            # previous_val is either the real last value (step 0) or the previous predicted value
+            previous_val = last_row.get('calculated_aqi', raw_pred)
+            
+            # Apply Smooth
+            smoothed_val = (smoothing_factor * raw_pred) + ((1 - smoothing_factor) * previous_val)
+            
+            pred_val = smoothed_val # Use smoothed value for buffer and output
             
             # --- Update Buffer (Feedback) ---
             est_pm25 = estimate_pm25_from_aqi(pred_val)
@@ -139,7 +152,8 @@ class AQIPredictionService:
             future_predictions.append({
                 'datetime': next_dt,
                 'predicted_aqi': pred_val,
-                'pm2_5': est_pm25
+                'pm2_5': est_pm25,
+                'raw_aqi': raw_pred # Optional: Keep raw for debug if needed
             })
             
             # Update last_row for next persistence

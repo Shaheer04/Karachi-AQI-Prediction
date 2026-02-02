@@ -29,7 +29,12 @@ To maximize model performance and interpretability, we employed **SHAP (SHapley 
     - **Trends**: `pm2_5_rolling_6h`, `aqi_6hr_avg` (Captures immediate shifts)
     - **Cyclic Time**: `hour_sin`/`cos`, `month_sin`/`cos` (Encodes temporal patterns without discontinuities)
 
-### 3. 🔮 72-Hour Recursive Prediction Strategy
+### 3. 🛡️ Overfitting Prevention & Robust Validation
+To ensure the model generalizes well to unseen future data, we implement strict validation checks:
+- **Train vs. Test Gap**: The pipeline calculates RMSE for both training and test sets. If the gap exceeds a threshold (indicating memorization), the model is flagged with an **Overfitting Warning**.
+- **Time Series Cross-Validation**: We use `TimeSeriesSplit` to validate model stability across multiple historical windows, ensuring it doesn't just perform well on a single arbitrary split.
+
+### 4. 🔮 72-Hour Recursive Prediction Strategy
 Predicting multi-step time series can be challenging. We implemented a **Recursive Autoregressive Strategy** with **Seasonal Persistence** to forecast 72 hours ahead:
 1.  **Step-by-Step**: The model predicts $t+1$, feeds that prediction back as history for $t+2$, and repeats for 72 steps.
 2.  **Seasonal Context**: Instead of simple flat persistence, the recursion logic looks back **24 hours** in the prediction buffer to carry over daily seasonal patterns (e.g., traffic peaks), ensuring the forecast remains realistic over the 3-day horizon.
@@ -83,7 +88,11 @@ pip install -r requirements.txt
     ```bash
     python scripts/training_pipeline.py
     ```
-3.  **Launch App**:
+3.  **Start Backend API**:
+    ```bash
+    uvicorn src.api.main:app --reload
+    ```
+4.  **Launch App**:
     ```bash
     streamlit run src/frontend/app.py
     ```

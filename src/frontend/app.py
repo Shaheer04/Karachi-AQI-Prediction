@@ -147,7 +147,6 @@ def main():
     c1, c2 = st.columns([3, 1])
     with c1:
         st.markdown("# ⚡ Karachi AQI Predictor")
-        st.caption("Advanced AI Forecasting • Powered by Hopsworks & OpenWeather")
     with c2:
         if st.button("🔄 Refresh"):
             del st.session_state['data']
@@ -200,15 +199,29 @@ def main():
     
     col_stat, col_gauge, col_meta = st.columns([2, 2, 1])
     
+    # Extract Today's Summary (First item)
+    today_summary = daily.pop(0) if daily else {}
+    today_range = f"Low: {today_summary.get('min_aqi', 0):.0f} - High: {today_summary.get('max_aqi', 0):.0f}" if today_summary else "N/A"
+    today_avg = f"Avg: {today_summary.get('avg_aqi', 0):.0f}" if today_summary else ""
+    
     with col_stat:
         st.markdown(f"""
         <div class="metric-card">
-            <h4 style="margin:0; color: #94a3b8;">CURRENT STATUS</h4>
-            <h1 style="font-size: 4rem; color: {cat_color}; margin: 10px 0;">{curr_aqi:.0f}</h1>
-            <span class="badge" style="background-color: {cat_color}; color: white;">{cat_name}</span>
-            <div style="margin-top: 20px;">
-                <p style="font-size: 1.2rem; color: #cbd5e1;">PM2.5: <strong style="color: #38bdf8;">{curr_pm25} µg/m³</strong></p>
-                <p style="font-size: 0.9rem; color: #64748b;">{cat_desc}</p>
+            <div style="display: flex; justify-content: space-between; align-items: start;">
+                <div>
+                    <h4 style="margin:0; color: #94a3b8; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px;">Current Status</h4>
+                    <h1 style="font-size: 4.5rem; color: {cat_color}; margin: 5px 0 10px 0; line-height: 1;">{curr_aqi:.0f}</h1>
+                    <span class="badge" style="background-color: {cat_color}; color: white;">{cat_name}</span>
+                </div>
+                <div style="text-align: right; background: rgba(255,255,255,0.03); padding: 10px; border-radius: 8px;">
+                    <h5 style="margin: 0 0 5px 0; color: #cbd5e1;">Today's Forecast</h5>
+                    <p style="margin: 0; font-size: 0.9rem; color: #94a3b8;">{today_range}</p>
+                    <p style="margin: 0; font-size: 0.9rem; color: #38bdf8; font-weight: bold;">{today_avg}</p>
+                </div>
+            </div>
+            <div style="margin-top: 25px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
+                <p style="font-size: 1.1rem; color: #cbd5e1; margin: 0;">PM2.5 Concentration: <strong style="color: #38bdf8;">{curr_pm25} µg/m³</strong></p>
+                <p style="font-size: 0.9rem; color: #64748b; margin-top: 5px;">{cat_desc}</p>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -231,63 +244,86 @@ def main():
         mae = metrics.get('MAE', metrics.get('mae', 'N/A'))
         if isinstance(mae, float): mae = f"{mae:.2f}"
         
-        # Create the HTML string first to keep things clean
+        # New: Train RMSE extraction and Gap Calculation
+        train_rmse_val = metrics.get('train_rmse', 0)
+        test_rmse_val = metrics.get('RMSE', metrics.get('rmse', 0))
+        
+        # Format strings
+        train_rmse_str = f"{float(train_rmse_val):.2f}" if train_rmse_val else "N/A"
+        
+        # Logic for explanation
+        explanation = "Model generalizes well."
+        color_status = "#22c55e" # Green
+        
+        if train_rmse_val and test_rmse_val:
+            t_val = float(test_rmse_val)
+            tr_val = float(train_rmse_val)
+            gap = t_val - tr_val
+            
+            if gap < 1.5:
+                explanation = "✅ <strong>Good Fit:</strong> Test error is close to Train error, meaning the model is <strong>not overfitting</strong>."
+                color_status = "#22c55e"
+            elif gap < 3.0:
+                explanation = "⚠️ <strong>Moderate Gap:</strong> Some difference, but acceptable."
+                color_status = "#eab308"
+            else:
+                explanation = "❌ <strong>Overfitting Risk:</strong> Large gap detected."
+                color_status = "#ef4444"
+
         html_content = (
             f'<div class="metric-card" style="height: 100%;">'
-            f'<h5 style="color: #94a3b8; margin: 0;">Model Card</h5>'
-            f'<p style="margin: 5px 0; color: #f8fafc; font-size: 1.1rem;"><strong>{meta.get("name", "AQI-Predictor")}</strong></p>'
-            f'<div style="display: flex; justify-content: space-between; margin-top: 15px;">'
-            f'<div style="text-align: center;">'
-            f'<span style="font-size: 0.8rem; color: #64748b; display: block;">R² Score</span>'
-            f'<span style="color: #22c55e; font-size: 1.5rem; font-weight: bold;">{r2}</span>'
+            f'<h5 style="color: #94a3b8; margin: 0;">Model Performance</h5>'
+            
+            # --- RMSE Comparison Grid ---
+            f'<div style="margin-top: 15px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; text-align: center;">'
+            
+            # Train RMSE Box
+            f'<div style="background: rgba(255,255,255,0.05); padding: 10px; border-radius: 8px;">'
+            f'<span style="font-size: 0.8rem; color: #94a3b8; display: block;">Train RMSE</span>'
+            f'<span style="color: #cbd5e1; font-size: 1.3rem; font-weight: bold;">{train_rmse_str}</span>'
             f'</div>'
-            f'<div style="text-align: center;">'
-            f'<span style="font-size: 0.8rem; color: #64748b; display: block;">RMSE</span>'
-            f'<span style="color: #38bdf8; font-size: 1.5rem; font-weight: bold;">{rmse}</span>'
+            
+            # Test RMSE Box
+            f'<div style="background: rgba(56, 189, 248, 0.1); padding: 10px; border-radius: 8px; border: 1px solid rgba(56, 189, 248, 0.3);">'
+            f'<span style="font-size: 0.8rem; color: #38bdf8; display: block; font-weight: 600;">Test RMSE</span>'
+            f'<span style="color: #38bdf8; font-size: 1.3rem; font-weight: bold;">{rmse}</span>'
             f'</div>'
+            
+            f'</div>' # End RMSE Grid
+
+            # --- Explanation Box ---
+            f'<div style="margin-top: 12px; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; border-left: 3px solid {color_status};">'
+            f'<p style="margin: 0; font-size: 0.85rem; color: #cbd5e1; line-height: 1.4;">{explanation}</p>'
             f'</div>'
-            f'<div style="margin-top: 15px; border-top: 1px solid #334155; padding-top: 10px;">'
-            f'<div style="display: flex; justify-content: space-between; align-items: center;">'
-            f'<span style="font-size: 0.8rem; color: #64748b;">MAE</span>'
+            
+            # --- Other Metrics (MAE, R2, Type) ---
+            f'<div style="margin-top: 15px; padding-top: 12px; border-top: 1px solid #334155;">'
+            
+            f'<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">'
+            f'<span style="font-size: 0.85rem; color: #94a3b8;">Mean Abs Error (MAE)</span>'
             f'<span style="color: #cbd5e1; font-weight: bold;">{mae}</span>'
             f'</div>'
-            f'<div style="display: flex; justify-content: space-between; align-items: center; margin-top: 5px;">'
-            f'<span style="font-size: 0.8rem; color: #64748b;">Type</span>'
-            f'<span style="color: #cbd5e1; font-size: 0.8rem;">{meta.get("type", "ML").upper()}</span>'
+            
+            f'<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">'
+            f'<span style="font-size: 0.85rem; color: #94a3b8;">R² Score</span>'
+            f'<span style="color: #22c55e; font-weight: bold;">{r2}</span>'
             f'</div>'
-            f'<div style="display: flex; justify-content: space-between; align-items: center; margin-top: 5px;">'
-            f'<span style="font-size: 0.8rem; color: #64748b;">Ver</span>'
-            f'<span style="color: #64748b; font-size: 0.8rem;">{meta.get("version", "N/A")}</span>'
+
+            f'<div style="display: flex; justify-content: space-between; align-items: center;">'
+            f'<span style="font-size: 0.85rem; color: #94a3b8;">Model Type</span>'
+            f'<span style="color: #64748b; font-size: 0.85rem;">{meta.get("type", "ML").upper()}</span>'
             f'</div>'
-            f'</div>'
+            
+            f'</div>' # End Other Metrics
+            
             f'</div>'
         )
         
         st.markdown(html_content, unsafe_allow_html=True)
 
-    # --- Chart Section ---
-    st.markdown("### 📈 72-Hour Future Trend")
-    
-    df_chart = pd.DataFrame(hourly)
-    df_chart['datetime'] = pd.to_datetime(df_chart['datetime'])
-    
-    fig = px.area(df_chart, x='datetime', y='predicted_aqi', 
-                  color_discrete_sequence=['#38bdf8'])
-    
-    fig.update_layout(
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
-        font={'color': '#94a3b8'},
-        xaxis=dict(showgrid=False),
-        yaxis=dict(showgrid=True, gridcolor='#334155'),
-        margin=dict(l=0, r=0, t=0, b=0),
-        height=350
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    # --- 3 Day Outlook ---
-    st.subheader("📅 3-Day Forecast")
-    c_days = st.columns(len(daily))
+    # --- Upcoming Forecast ---
+    st.markdown("### 📅 Upcoming Forecast")
+    c_days = st.columns(len(daily)) # Now only 2 days left in daily list
     
     for i, day in enumerate(daily):
         d_avg = day['avg_aqi']
@@ -302,6 +338,58 @@ def main():
                 <p style="color: #94a3b8; font-size: 0.9rem;">Range: {day['min_aqi']:.0f} - {day['max_aqi']:.0f}</p>
             </div>
             """, unsafe_allow_html=True)
+            
+    st.markdown("<br>", unsafe_allow_html=True) # Spacer
 
+    # --- Chart Section (72 Hours) ---
+    st.markdown("### 📊 72-Hour Future Trend")
+    
+    df_chart = pd.DataFrame(hourly)
+    df_chart['datetime'] = pd.to_datetime(df_chart['datetime'])
+    
+    # Create readable label
+    df_chart['Time'] = df_chart['datetime'].dt.strftime('%a %I %p') # e.g. Mon 02 PM
+    
+    # Use Bar Chart for better readability of discrete hours
+    fig = px.bar(df_chart, x='datetime', y='predicted_aqi', 
+                 color='predicted_aqi',
+                 title="",
+                 color_continuous_scale=[
+                     (0.0, '#22c55e'),   # Good
+                     (0.2, '#eab308'),   # Moderate
+                     (0.4, '#f97316'),   # Sensitive
+                     (0.6, '#ef4444'),   # Unhealthy
+                     (0.8, '#a855f7'),   # Very Unhealthy
+                     (1.0, '#7f1d1d')    # Hazardous
+                 ],
+                 range_color=[0, 300]
+                )
+    
+    fig.update_layout(
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font={'color': '#94a3b8', 'family': 'Outfit'},
+        xaxis=dict(
+            showgrid=False, 
+            tickformat='%a %I %p',  # Readable format on axis: "Mon 02 PM"
+            dtick=4 * 60 * 60 * 1000, # Show tick every 4 hours to avoid clutter
+            title=None
+        ),
+        yaxis=dict(
+            showgrid=True, 
+            gridcolor='#334155',
+            title='AQI Level'
+        ),
+        margin=dict(l=0, r=0, t=10, b=0),
+        height=350,
+        coloraxis_showscale=False # Hide color bar
+    )
+    
+    # Custom hover template
+    fig.update_traces(
+        hovertemplate="<b>%{x|%a, %d %b %I:%M %p}</b><br>AQI: %{y:.0f}<extra></extra>"
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
 if __name__ == "__main__":
     main()

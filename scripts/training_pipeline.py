@@ -92,9 +92,44 @@ def train_model():
 
     # --- Selection ---
     # Select best model based on RMSE (Primary)
-    best_model_name = min(metrics, key=lambda k: metrics[k]['rmse'])
+    
+    def is_ovefitting(metrics_dict, threshold=10):
+        """Returns True if Test RMSE is > Train RMSE + threshold"""
+        train_rmse = metrics_dict.get('train_rmse', 0)
+        test_rmse = metrics_dict['rmse']
+        gap = test_rmse - train_rmse
+        if gap > threshold: 
+            return True, gap
+        return False, gap
+
+    # Filter out models that are severely overfitting
+    # Logic: Prioritize models that are NOT overfitting. 
+    # If valid models exist, pick best RMSE among them.
+    # If all overfit, pick best RMSE among all.
+    
+    print("\n--- Model Selection & Overfitting Check ---")
+    
+    valid_models = {}
+    
+    for name, m_metrics in metrics.items():
+        is_over, gap = is_ovefitting(m_metrics)
+        status = "OVERFITTING WARNING" if is_over else "OK"
+        print(f"Model: {name} | Test RMSE: {m_metrics['rmse']:.4f} | Train RMSE: {m_metrics.get('train_rmse',0):.4f} | Gap: {gap:.4f} -> {status}")
+        
+        if not is_over:
+            valid_models[name] = m_metrics['rmse']
+
+    # Selection Logic
+    if valid_models:
+        print(f"\n✅ Found {len(valid_models)} valid models (Not Overfitting). Selecting the best among them...")
+        best_model_name = min(valid_models, key=valid_models.get)
+    else:
+        print(f"\n⚠️ All models triggered Overfitting Warning. Falling back to absolute best RMSE...")
+        # Fallback to original logic: min RMSE of ALL metrics
+        best_model_name = min(metrics, key=lambda k: metrics[k]['rmse'])
+
     best_metrics = metrics[best_model_name]
-    print(f"\nBest Model: {best_model_name} with RMSE: {best_metrics['rmse']:.4f}")
+    print(f"\n🏆 Best Model Selected: {best_model_name} with Test RMSE: {best_metrics['rmse']:.4f}")
     
     best_model = models[best_model_name]
 
@@ -125,7 +160,8 @@ def train_model():
         metrics={
             "rmse": best_metrics['rmse'],
             "mae": best_metrics['mae'],
-            "r2": best_metrics['r2']
+            "r2": best_metrics['r2'],
+            "train_rmse": best_metrics.get('train_rmse', 0)
         },
         description=f"Best Daily AQI Model. Type: {best_model_name}. RMSE: {best_metrics['rmse']:.4f}",
         input_example=input_example
