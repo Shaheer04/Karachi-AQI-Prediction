@@ -1,3 +1,4 @@
+# Backend Core
 fastapi
 uvicorn
 python-dotenv
@@ -12,3 +13,9 @@ xgboost
 lightgbm
 catboost
 prophet
+
+# Frontend Core
+streamlit
+plotly
+altair
+watchdog
