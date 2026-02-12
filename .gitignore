@@ -9,3 +9,8 @@ wheels/
 # Virtual environments
 .venv
 .env
+
+# Large Data
+data/
+__pycache__/
+*.pyc
