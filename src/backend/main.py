@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
 import tensorflow as tf
 from src.utils import feature_engineering
-from src.api.prediction_service import AQIPredictionService
+from src.backend.prediction_service import AQIPredictionService
 
 # Load environment variables
 load_dotenv()
@@ -176,6 +176,9 @@ def predict_aqi():
             fs_df = fetch_fs_history() 
             if fs_df is not None and not fs_df.empty:
                 print(f"History fetched: {len(fs_df)} rows.")
+                print("--- DEBUG: Raw Data from Feature Store (Last 3 Rows) ---")
+                print(fs_df[['datetime_utc', 'pm2_5', 'calculated_aqi']].tail(3).to_string())
+                print("--------------------------------------------------------")
             else:
                 print("History fetched: 0 rows.")
         except Exception as e:

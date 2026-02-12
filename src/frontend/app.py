@@ -146,7 +146,7 @@ def main():
     # --- Header ---
     c1, c2 = st.columns([3, 1])
     with c1:
-        st.markdown("# ⚡ Karachi AQI Predictor")
+        st.markdown("# Karachi AQI Predictor")
     with c2:
         if st.button("🔄 Refresh"):
             del st.session_state['data']
