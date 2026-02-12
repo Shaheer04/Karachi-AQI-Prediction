@@ -22,9 +22,9 @@ COPY . .
 # Make start script executable
 RUN chmod +x start.sh
 
-# Expose ports (Streamlit default 8501, FastAPI 8000)
+# Expose port (Streamlit default 8501)
 # Railway will assign a PORT env var, which start.sh uses for Streamlit
-EXPOSE 8501 8000
+EXPOSE 8501
 
 # Set entrypoint
 CMD ["./start.sh"]

@@ -1,6 +1,4 @@
-# Backend Core
-fastapi
-uvicorn
+
 python-dotenv
 requests
 hopsworks==4.2.*

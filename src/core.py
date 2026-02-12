@@ -1,8 +1,24 @@
+import os
+import time
 import pandas as pd
 import numpy as np
-from datetime import timedelta
+import joblib
+import hopsworks
+import tensorflow as tf
+from datetime import datetime, timedelta, timezone
+from dotenv import load_dotenv
 from src.utils import feature_engineering
 
+# Load environment variables
+load_dotenv()
+
+HOPSWORKS_PROJECT_NAME = os.getenv("HOPSWORKS_PROJECT_NAME")
+HOPSWORKS_API_KEY = os.getenv("HOPSWORKS_API_KEY")
+
+# --- Constants ---
+MODEL_DIR = "models_inference"
+
+# --- Helper Logic (from prediction_service.py) ---
 def estimate_pm25_from_aqi(aqi):
     """
     Estimates PM2.5 concentration (ug/m3) from AQI using inverted EPA breakpoints.
@@ -47,7 +63,7 @@ class AQIPredictionService:
         history_df = history_df.sort_values("datetime_utc")
         history_df['datetime_utc'] = pd.to_datetime(history_df['datetime_utc'])
         
-        # Check if PM2.5 exists, else impute
+        # Check if PM2.5 exists, else impute (simple forward fill or mean if totally missing, but we expect it)
         if 'pm2_5' not in history_df.columns:
             print("PM2.5 missing in history!")
             
@@ -57,15 +73,14 @@ class AQIPredictionService:
         future_predictions = []
         
         # Last known row for persistence
+        if not buffer:
+            return []
+
         last_row = buffer[-1]
         last_dt = last_row['datetime_utc']
         
         print(f"Starting recursion from: {last_dt}")
-        print(f"--- DEBUG: Prediction Start Context ---")
-        print(f"Initial PM2.5: {last_row.get('pm2_5')}")
-        print(f"Initial AQI:   {last_row.get('calculated_aqi')}")
-        print("---------------------------------------")
-
+        
         for i in range(steps):
             next_dt = last_dt + timedelta(hours=i+1)
             
@@ -102,16 +117,11 @@ class AQIPredictionService:
             feat_aqi_lag_24 = hist_row.get('calculated_aqi', 0)
             
             # Rolling (6h) - Average of last 6 items in buffer
-            # Note: The buffer contains [..., T-2, T-1]. The 'shift(1)' in pandas means 
-            # we simply take the last 6 items clearly.
             rolling_window = buffer[-6:]
             feat_pm25_rolling_6h = np.mean([r['pm2_5'] for r in rolling_window])
             feat_aqi_6hr_avg = np.mean([r.get('calculated_aqi', 0) for r in rolling_window])
             
             # --- 4. Assemble Input Row ---
-            # We put these into a single-row DataFrame to ensure Scaler column alignment.
-            # Base 'next_row' has the "seasonal" pollutant values (pm2_5, no2, etc).
-            
             # Create a localized dict for the model input
             input_features = next_row.copy() 
             
@@ -163,11 +173,7 @@ class AQIPredictionService:
             raw_pred = max(0, float(pred_val))
             
             # --- 6. Smoothing Strategy ---
-            # Blend the model's prediction with the last known value.
-            # Restored to 0.3 to prevent jumps.
-            
             smoothing_factor = 0.7
-            
             previous_val = last_row.get('calculated_aqi', raw_pred)
             smoothed_val = (smoothing_factor * raw_pred) + ((1 - smoothing_factor) * previous_val)
             pred_val = smoothed_val 
@@ -189,3 +195,164 @@ class AQIPredictionService:
             last_row = input_features
             
         return future_predictions
+
+# --- Core Functions ---
+
+def load_model_artifacts():
+    """Downloads (if needed) and loads the best model and scalers from Hopsworks Model Registry."""
+    model_artifacts = {}
+    
+    if not HOPSWORKS_API_KEY or not HOPSWORKS_PROJECT_NAME:
+        print("Hopsworks credentials not found. Cannot load model.")
+        return None
+
+    try:
+        project = hopsworks.login(project=HOPSWORKS_PROJECT_NAME, api_key_value=HOPSWORKS_API_KEY)
+        mr = project.get_model_registry()
+        
+        # Get best model
+        models = mr.get_models("aqi_predictor_best")
+        if not models:
+            raise Exception("No models found")
+        
+        # Sort by version
+        best_model = max(models, key=lambda m: m.version)
+        print(f"Loading model version: {best_model.version}")
+        
+        # --- Metrics Extraction ---
+        try:
+            metrics = best_model.training_metrics if best_model.training_metrics else {}
+            if not metrics and hasattr(best_model, 'metrics'):
+                metrics = best_model.metrics
+            
+            clean_metrics = {}
+            if metrics:
+                for k, v in metrics.items():
+                    try:
+                        if isinstance(v, (int, float)):
+                            clean_metrics[k] = round(float(v), 4)
+                        else:
+                            clean_metrics[k] = v 
+                    except:
+                        clean_metrics[k] = str(v)
+            else:
+                clean_metrics = {"Status": "No metrics available"}
+                
+            model_artifacts['metrics'] = clean_metrics
+        except Exception as e:
+            print(f"Warning: Could not extract metrics: {e}")
+            model_artifacts['metrics'] = {"Error": "Failed to load metrics"}
+        
+        model_artifacts['name'] = best_model.name
+        model_artifacts['version'] = best_model.version
+        
+        # Download
+        model_path = best_model.download()
+        
+        # --- Model Loading ---
+        if os.path.exists(os.path.join(model_path, "model.keras")):
+             loaded_model = tf.keras.models.load_model(os.path.join(model_path, "model.keras"))
+             model_artifacts['model'] = loaded_model
+             model_artifacts['type'] = 'LSTM' 
+        else:
+             loaded_model = joblib.load(os.path.join(model_path, "model.pkl"))
+             model_artifacts['model'] = loaded_model
+             type_name = type(loaded_model).__name__
+             if 'XGB' in type_name: model_artifacts['type'] = 'XGBoost'
+             elif 'LGBM' in type_name: model_artifacts['type'] = 'LightGBM'
+             elif 'CatBoost' in type_name: model_artifacts['type'] = 'CatBoost'
+             else: model_artifacts['type'] = type_name
+             
+        model_artifacts['scaler_X'] = joblib.load(os.path.join(model_path, "scaler_X.pkl"))
+        model_artifacts['scaler_y'] = joblib.load(os.path.join(model_path, "scaler_y.pkl"))
+        
+        print(f"Model loaded successfully. Type: {model_artifacts['type']}")
+        return model_artifacts
+
+    except Exception as e:
+        print(f"Failed to load model from Hopsworks: {e}")
+        return None
+
+def fetch_recent_history():
+    """Fetches last 3 days of history from Hopsworks Feature Store (v2 Raw)."""
+    try:
+        project = hopsworks.login(project=HOPSWORKS_PROJECT_NAME, api_key_value=HOPSWORKS_API_KEY)
+        fs = project.get_feature_store()
+        fg = fs.get_feature_group(name="aqi_features_karachi", version=2)
+        
+        now = datetime.now(timezone.utc)
+        start_time = int((now - timedelta(days=3)).timestamp() * 1000)
+        
+        query = fg.select_all()
+        print("Fetching recent history from Hopsworks Feature Store (v2)...")
+        df_raw = query.filter(fg.datetime_id >= start_time).read()
+        
+        return df_raw
+    except Exception as e:
+        print(f"Failed to fetch history from Feature Store: {e}")
+        return None
+
+def get_predictions(model_artifacts):
+    """Orchestrates the prediction process."""
+    if not model_artifacts:
+        return None
+
+    try:
+        # 1. Fetch History
+        fs_df = fetch_recent_history()
+        
+        if fs_df is None or fs_df.empty or len(fs_df) < 24:
+             print(f"Not enough history data (found {len(fs_df) if fs_df is not None else 0} rows).")
+             # Try to return something if we have at least 1 row? 
+             # For now, strict check like main.py
+             if fs_df is None or len(fs_df) < 24:
+                return None
+
+        # 2. Predict Future   
+        service = AQIPredictionService(model_artifacts)
+        future_predictions = service.predict_future(fs_df, steps=72)
+            
+        # 3. Response Construction
+        response_data = []
+        daily_buckets = {}
+        
+        for item in future_predictions:
+            dt = item['datetime']
+            val = item['predicted_aqi']
+            
+            response_data.append({
+                "datetime": dt.isoformat(),
+                "predicted_aqi": round(val, 2),
+                "pm2_5": round(item['pm2_5'], 2)
+            })
+            
+            day_key = dt.strftime('%Y-%m-%d')
+            if day_key not in daily_buckets: daily_buckets[day_key] = []
+            daily_buckets[day_key].append(val)
+            
+        daily_summary = []
+        for day, values in daily_buckets.items():
+            daily_summary.append({
+                "date": day,
+                "avg_aqi": round(float(np.mean(values)), 2),
+                "min_aqi": round(float(np.min(values)), 2),
+                "max_aqi": round(float(np.max(values)), 2)
+            })
+            
+        return {
+            "model_metadata": {
+                "name": model_artifacts.get('name', 'AQI-Predictor'),
+                "version": f"v{model_artifacts.get('version', '1.0')}",
+                "type": model_artifacts.get('type', 'Unknown'),
+                "metrics": model_artifacts.get('metrics', {}),
+                "last_updated": datetime.now(timezone.utc).isoformat()
+            },
+            "hourly_predictions": response_data,
+            "daily_summary": daily_summary
+        }
+
+    except Exception as e:
+        print(f"Error during prediction: {e}")
+        import traceback
+        traceback.print_exc()
+        return None

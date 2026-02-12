@@ -1,5 +1,10 @@
+import sys
+import os
+
+# Add project root to sys.path to allow imports from src
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+
 import streamlit as st
-import requests
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -9,7 +14,6 @@ import time
 # --- Configuration & Constants ---
 PAGE_TITLE = "Karachi AQI Predictor Pro"
 PAGE_ICON = "⚡"
-API_URL = "http://localhost:8000/predict"
 
 st.set_page_config(
     page_title=PAGE_TITLE,
@@ -80,6 +84,7 @@ def setup_css():
     </style>
     """, unsafe_allow_html=True)
 
+
 # --- Helpers ---
 def get_aqi_details(aqi):
     if aqi <= 50: return "Good", "#22c55e", "Air quality is satisfactory."
@@ -89,16 +94,24 @@ def get_aqi_details(aqi):
     elif aqi <= 300: return "Very Unhealthy", "#a855f7", "Health warnings of emergency conditions."
     else: return "Hazardous", "#7f1d1d", "Health warning of emergency conditions."
 
+# --- Prediction Logic (Local) ---
+from src import core
+
+@st.cache_resource
+def get_model_artifacts():
+    """Loads model artifacts once and caches them."""
+    return core.load_model_artifacts()
+
 def fetch_predictions():
-    """Fetches data from API."""
-    try:
-        response = requests.get(API_URL)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return None
-    except:
+    """Fetches data using local core logic."""
+    artifacts = get_model_artifacts()
+    if not artifacts:
         return None
+    
+    # We don't cache predictions (they depend on live data)
+    # But core.get_predictions orchestrates fetching history which could be cached if needed, 
+    # but for now we want fresh data on refresh.
+    return core.get_predictions(artifacts)
 
 # --- Components ---
 
@@ -149,7 +162,8 @@ def main():
         st.markdown("# Karachi AQI Predictor")
     with c2:
         if st.button("🔄 Refresh"):
-            del st.session_state['data']
+            if 'data' in st.session_state:
+                del st.session_state['data']
             st.rerun()
 
     # --- Loading State (Auto-load) ---
@@ -167,14 +181,16 @@ def main():
             """, unsafe_allow_html=True)
             
             # Simulated delay for "coolness" + actual fetch
-            time.sleep(1.5) 
-            data = fetch_predictions()
+            # time.sleep(1.5) # Removed artificial delay for performance
+            
+            with st.spinner("Loading Model & Fetching Data..."):
+                data = fetch_predictions()
             
             if data:
                 st.session_state['data'] = data
                 st.rerun()
             else:
-                st.error("❌ Failed to connect to Prediction Service. Is the backend running?")
+                st.error("❌ Failed to fetch predictions. Model might be missing or Feature Store inaccessible.")
                 if st.button("Retry Connection"):
                     st.rerun()
                 st.stop()
