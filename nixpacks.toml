@@ -1,0 +1,5 @@
+# Nixpacks Configuration
+
+[phases.setup]
+nixPkgs = ["python310", "libgomp"]
+# Alternatively, aptPkgs = ["libgomp1"] if using standard Ubuntu base, but nixPkgs is safer for Nixpacks.
