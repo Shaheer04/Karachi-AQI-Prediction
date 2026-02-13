@@ -8,48 +8,47 @@
 ![Streamlit](https://img.shields.io/badge/Frontend-Streamlit-red.svg)
 
 ## 📖 Project Overview
-I implemented this robust, automated pipeline to predict the **Air Quality Index (AQI)** for Karachi, Pakistan, up to **72 hours** into the future. It leverages a serverless architecture with **Hopsworks** for feature management and model registry, ensuring reproducible and scalable ML workflows.
+This project implements a robust, automated pipeline to predict the **Air Quality Index (AQI)** for Karachi, Pakistan, up to **72 hours** into the future. It utilizes a **Serverless Architecture** with **Hopsworks** for feature management and model registry, ensuring reproducible and scalable ML workflows.
 
 The system is designed to provide actionable insights into air quality trends using historical pollutant data (`PM2.5`, `PM10`, `NO2`, etc.) and meteorological factors.
 
 ---
 
-## 🛠 Methodology
+## 🛠 Methodology & Key Challenges
 
 ### 1. 🔄 Automated Data Pipeline (Feature Store)
 I utilize **Hopsworks Feature Store** to manage the data lifecycle.
-- **Raw Data Ingestion**: Historical AQI data is fetched from OpenWeatherMap API.
-- **Automated Engineering**: A scheduled pipeline processes raw data into features and stores them in **Feature Groups (v2)**. This ensures that training and inference always use consistent feature definitions.
+- **Raw Data Ingestion**: Historical AQI data is fetched from OpenWeatherMap API and stored in **Feature Groups (v2)**.
+- **Automated Engineering**: A scheduled pipeline processes raw data into engineered features (Lags, Rolling Averages, Cyclical Time) on-the-fly, ensuring consistency between training and inference.
 
-### 2. 🎯 Feature Selection via SHAP Analysis
-To maximize model performance and interpretability, I employed **SHAP (SHapley Additive exPlanations)** analysis to identify the most critical drivers of AQI.
-- **Key Determinants**: The analysis revealed that `pm2_5_lag_24` (24-hour lag) and `pm2_5_rolling_6h` (recent trend) are the strongest predictors.
-- **Selected Features**: Based on this, I strictly filtered the feature set to:
-    - **Lags**: `pm2_5_lag_24`, `aqi_lag_24` (Captures daily seasonality)
-    - **Trends**: `pm2_5_rolling_6h`, `aqi_6hr_avg` (Captures immediate shifts)
-    - **Cyclic Time**: `hour_sin`/`cos`, `month_sin`/`cos` (Encodes temporal patterns without discontinuities)
+### 2. 🛡️ Overfitting Prevention Strategy
+To ensure the model generalizes well to unseen future data, I implement a strict **Gap-Based Overfitting Check**:
+- **Train vs. Test RMSE Gap**: The pipeline calculates the absolute difference between Train RMSE and Test RMSE.
+- **Strict Threshold**: If the gap exceeds **10 units**, the model is flagged with an **Overfitting Warning** and deprioritized during selection. This prevents "memorization" of historical data.
 
-### 3. 🛡️ Overfitting Prevention & Robust Validation
-To ensure the model generalizes well to unseen future data, I implement strict validation checks:
-- **Train vs. Test Gap**: The pipeline calculates RMSE for both training and test sets. If the gap exceeds a threshold (indicating memorization), the model is flagged with an **Overfitting Warning**.
-- **Time Series Cross-Validation**: I use `TimeSeriesSplit` to validate model stability across multiple historical windows, ensuring it doesn't just perform well on a single arbitrary split.
+### 3. 📉 Challenge: Error Accumulation in Forecasting
+**Problem**: A standard 72-step recursive prediction often degrades into a "flat line" (converging to the mean) because errors compound at each step.
+**Solution**:
+- **Seasonal Persistence (Anchoring)**: I implemented a mechanism that looks back **24 hours** in the prediction buffer during recursion.
+- **Context Injection**: By feeding the `pm2_5` value from the previous day (t-24h) as a lag feature into the model at each step, the forecast maintains realistic **diurnal seasonality** (morning peaks/evening lows) throughout the 3-day horizon.
 
-### 4. 🔮 72-Hour Recursive Prediction Strategy
-Predicting multi-step time series can be challenging. I implemented a **Recursive Autoregressive Strategy** with **Seasonal Persistence** to forecast 72 hours ahead:
-1.  **Step-by-Step**: The model predicts $t+1$, feeds that prediction back as history for $t+2$, and repeats for 72 steps.
-2.  **Seasonal Context**: Instead of simple flat persistence, the recursion logic looks back **24 hours** in the prediction buffer to carry over daily seasonal patterns (e.g., traffic peaks), ensuring the forecast remains realistic over the 3-day horizon.
+### 4. ⚡ Challenge: Serverless Execution Limits
+**Problem**: GitHub Actions and other serverless runners have strict execution time limits. Deep Learning models (LSTM) can easily time out.
+**Solution**:
+- **Efficient Architectures**: The pipeline prioritizes fast, gradient-boosting models (**LightGBM**, **CatBoost**) which train in seconds on this dataset.
+- **Sequential Execution**: Models are trained sequentially in a single job to avoid complex orchestration overheads, ensuring the entire pipeline (Fetch -> Train -> Register) completes well within standard timeout limits.
 
 ---
 
 ## 🤖 Model Training & Selection
 
-I train multiple state-of-the-art models in parallel to ensure the best performance for current conditions.
+I train multiple state-of-the-art models to ensure the best performance for current conditions.
 
 ### Hybrid Training Pipeline
 The automated training script trains three distinct model architectures:
 1.  **LightGBM**: Highly efficient gradient boosting decision tree.
 2.  **CatBoost**: Gradient boosting with advanced handling of numerical features.
-3.  **LSTM (Long Short-Term Memory)**: A recurrent neural network (built with TensorFlow/Keras) capturing complex temporal dependencies.
+3.  **LSTM**: A recurrent neural network capturing complex temporal dependencies (TensorFlow/Keras).
 
 ### ✅ Automated Selection (Why RMSE?)
 The pipeline automatically evaluates all trained models and promotes the **best performer** to the Model Registry.
@@ -63,9 +62,8 @@ The pipeline automatically evaluates all trained models and promotes the **best 
 
 - **Orchestration & MLOps**: [Hopsworks](https://www.hopsworks.ai/) (Feature Store, Model Registry)
 - **Modeling**: `scikit-learn`, `LightGBM`, `CatBoost`, `TensorFlow`
-- **API**: `FastAPI` (Inference Endpoint)
-- **Frontend**: `Streamlit` (Interactive Dashboard)
-- **Visualization**: `Plotly`, `SHAP`
+- **Frontend**: `Streamlit` (Interactive Dashboard & Inference)
+- **Visualization**: `Plotly`, `SHAP` (Offline Analysis)
 
 ---
 
@@ -118,6 +116,7 @@ You must set up your environment variables for the code to access the Hopsworks 
 
 ```ini
 HOPSWORKS_API_KEY=your_api_key_here
+HOPSWORKS_PROJECT_NAME=your_project_name
 ```
 
 ### 4. Running the System
@@ -131,20 +130,13 @@ python scripts/feature_pipeline.py --days 1
 ```
 
 #### B. Training Pipeline
-Trains models, evaluates them, and registers the best one.
+Trains models, selects the best one based on RMSE, and registers it.
 ```bash
 python scripts/training_pipeline.py
 ```
 
-#### C. Backend API
-Starts the local inference server.
-```bash
-uvicorn src.api.main:app --reload
-```
-*API will be available at `http://localhost:8000`*
-
-#### D. Frontend Dashboard
-Launches the Streamlit app.
+#### C. Frontend Dashboard (Main App)
+Launches the Streamlit app which handles accurate real-time inference.
 ```bash
 streamlit run src/frontend/app.py
 ```
