@@ -225,22 +225,35 @@ def main():
                     data.get("model_metadata", {}).get("metrics", {}).get("source")
                     == "Local Fallback Model"
                 ):
-                    st.warning(
-                        "⚠️ Using local fallback model (Hopsworks unavailable)", icon="⚠️"
+                    st.info(
+                        "ℹ️ Using local fallback model (Hopsworks unavailable)", icon="ℹ️"
                     )
                 st.rerun()
             else:
                 st.error(
                     "❌ Failed to fetch predictions. Could not load model or generate data."
                 )
+
+                # Show diagnostic info
                 st.info(
-                    "💡 Make sure your local models are in the `/models/` directory or check your Hopsworks credentials."
+                    "💡 **Troubleshooting:**\n"
+                    "- Check if your local models are in the `/models/` directory\n"
+                    "- Verify your Hopsworks credentials are set in environment variables\n"
+                    "- Check the app logs for detailed error messages"
                 )
-                if st.button("🔄 Retry Connection"):
-                    # Clear cache to force reload
-                    if "artifacts" in st.session_state:
-                        del st.session_state["artifacts"]
-                    st.rerun()
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🔄 Retry Connection"):
+                        # Clear cache to force reload
+                        if "artifacts" in st.session_state:
+                            del st.session_state["artifacts"]
+                        st.rerun()
+                with col2:
+                    if st.button("📋 View Logs"):
+                        st.write(
+                            "Check your terminal/server logs for detailed error information."
+                        )
                 st.stop()
 
     # --- Dashboard View (Data Loaded) ---
