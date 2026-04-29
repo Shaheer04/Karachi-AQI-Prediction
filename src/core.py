@@ -149,6 +149,12 @@ def generate_synthetic_history(hours=72):
                 "o3": np.random.uniform(5, 60),
                 "so2": np.random.uniform(2, 20),
                 "co": np.random.uniform(0.2, 2.0),
+                "nh3": np.random.uniform(5, 25),  # Added missing feature
+                "lat": 24.8607,  # Karachi latitude
+                "lon": 67.0011,  # Karachi longitude
+                "temperature": np.random.uniform(15, 35),  # Celsius
+                "humidity": np.random.uniform(30, 80),  # Percentage
+                "wind_speed": np.random.uniform(2, 15),  # m/s
             }
         )
 
@@ -292,26 +298,33 @@ class AQIPredictionService:
                 scaler_features = getattr(self.scaler_X, "feature_names_in_", None)
 
                 if scaler_features is not None:
-                    # Use only the columns the scaler was trained on
-                    cols_to_scale = [c for c in cols_to_scale if c in scaler_features]
-                    if cols_to_scale:
-                        X_scaled[cols_to_scale] = self.scaler_X.transform(
-                            X[cols_to_scale]
-                        )
+                    # Create a dataframe with exactly the columns the scaler expects
+                    X_for_scaler = pd.DataFrame(index=[0])
+                    for col in scaler_features:
+                        if col in X.columns:
+                            X_for_scaler[col] = X[col].values[0]
+                        else:
+                            # Missing feature, fill with 0 (neutral value)
+                            print(f"⚠️ Missing feature: {col}, filling with 0")
+                            X_for_scaler[col] = 0.0
+
+                    # Scale only these columns
+                    X_scaled_array = self.scaler_X.transform(X_for_scaler)
+                    X_scaled = pd.DataFrame(X_scaled_array, columns=scaler_features)
+                    final_input = X_scaled
                 else:
                     # Fallback: try all columns to scale
                     try:
                         X_scaled[cols_to_scale] = self.scaler_X.transform(
                             X[cols_to_scale]
                         )
-                    except Exception:
+                        final_input = X_scaled
+                    except Exception as scale_err:
                         # Last resort: just use the data as-is
                         print(
-                            f"Warning: Could not scale features at step {i}, using raw values"
+                            f"Warning: Could not scale features at step {i}, using raw values. Error: {scale_err}"
                         )
-                        pass
-
-                final_input = X_scaled
+                        final_input = X
             except Exception as e:
                 print(f"Scaling error at step {i}: {e}")
                 print(f"Available columns: {list(X.columns)}")
@@ -336,14 +349,46 @@ class AQIPredictionService:
                     pred_val = self.scaler_y.inverse_transform(pred_scaled).ravel()[0]
                     raw_pred = max(0, float(pred_val))
                 else:
+                    # Get model's expected n_features
+                    model_n_features = getattr(self.model, "n_features_in_", None)
+                    current_features = final_input.shape[1]
+
+                    # Pad features if needed
+                    if model_n_features and current_features < model_n_features:
+                        print(
+                            f"⚠️ Feature count mismatch: model expects {model_n_features}, got {current_features}"
+                        )
+                        # Pad with zeros
+                        padding = np.zeros(
+                            (final_input.shape[0], model_n_features - current_features)
+                        )
+                        final_input = np.hstack([final_input.values, padding])
+                        print(f"✓ Padded to {final_input.shape[1]} features")
+
                     try:
-                        pred_scaled = self.model.predict(final_input)
-                    except TypeError:
-                        # Try with numpy array if DataFrame fails
-                        pred_scaled = self.model.predict(final_input.values)
+                        # Ensure input is 2D
+                        if isinstance(final_input, pd.DataFrame):
+                            pred_input = final_input.values
+                        else:
+                            pred_input = final_input
+
+                        if pred_input.ndim == 1:
+                            pred_input = pred_input.reshape(1, -1)
+
+                        pred_scaled = self.model.predict(pred_input)
                     except Exception as pred_err:
-                        print(f"⚠️ Model prediction error at step {i}: {pred_err}")
-                        raise
+                        # Last attempt: try with shape check disabled for LightGBM
+                        if "feature" in str(pred_err).lower():
+                            print(f"⚠️ Feature mismatch error, attempting workaround...")
+                            # This might not work for all model types, so have fallback ready
+                            try:
+                                pred_scaled = self.model.predict(
+                                    pred_input, predict_disable_shape_check=True
+                                )
+                            except:
+                                raise pred_err
+                        else:
+                            raise
 
                     # Reshape for inverse transform
                     if pred_scaled.ndim == 1:
@@ -358,8 +403,6 @@ class AQIPredictionService:
                     float(last_row.get("calculated_aqi", 50.0))
                     + np.random.normal(0, 2),
                 )
-
-            raw_pred = max(0, float(pred_val))
 
             # --- 6. Smoothing Strategy ---
             smoothing_factor = 0.7
