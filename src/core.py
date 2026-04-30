@@ -103,12 +103,16 @@ def load_local_model():
         model_artifacts["version"] = 1
         model_artifacts["metrics"] = {"source": "Local Fallback Model"}
 
-        print(f"✅ Loaded local model. Type: {model_artifacts['type']}")
-        return model_artifacts
+        # Extract feature names for diagnostics
+        scaler_features = getattr(
+            model_artifacts["scaler_X"], "feature_names_in_", None
+        )
+        model_features = getattr(model_artifacts["model"], "feature_names_in_", None)
 
-        model_artifacts["name"] = "AQI-Predictor-Local"
-        model_artifacts["version"] = 1
-        model_artifacts["metrics"] = {"source": "Local Fallback Model"}
+        if scaler_features is not None:
+            print(f"  Scaler features ({len(scaler_features)}): {scaler_features}")
+        if model_features is not None:
+            print(f"  Model features ({len(model_features)}): {model_features}")
 
         print(f"✅ Loaded local model. Type: {model_artifacts['type']}")
         return model_artifacts
@@ -168,6 +172,10 @@ class AQIPredictionService:
         self.scaler_y = model_artifacts["scaler_y"]
         self.model_type = model_artifacts.get("type", "Unknown").upper()
 
+        # Get expected feature names from model and scaler
+        self.model_features = getattr(self.model, "feature_names_in_", None)
+        self.scaler_features = getattr(self.scaler_X, "feature_names_in_", None)
+
         if self.model_type == "UNKNOWN":
             # Try to infer model type from model class name
             model_class = type(self.model).__name__
@@ -181,13 +189,10 @@ class AQIPredictionService:
                 self.model_type = "CatBoost"
 
         print(f"AQIPredictionService initialized with model type: {self.model_type}")
-
-    def predict_future(self, history_df, steps=72):
-        """
-        Predicts future AQI for 'steps' hours using recursive autoregression.
-        Optimized for latency by using list-based buffering.
-        """
-        # --- 1. Preparation ---
+        if self.scaler_features is not None:
+            print(f"  Scaler expects: {list(self.scaler_features)}")
+        if self.model_features is not None:
+            print(f"  Model expects: {list(self.model_features)}")
         # Ensure history is sorted and has proper types
         history_df = history_df.sort_values("datetime_utc")
         history_df["datetime_utc"] = pd.to_datetime(history_df["datetime_utc"])
@@ -293,14 +298,11 @@ class AQIPredictionService:
 
             X_scaled = X.copy().astype(float)
             try:
-                # Try to transform only the columns the scaler knows about
-                # Get expected features from scaler (if available)
-                scaler_features = getattr(self.scaler_X, "feature_names_in_", None)
-
-                if scaler_features is not None:
+                # Use stored scaler features from __init__
+                if self.scaler_features is not None:
                     # Create a dataframe with exactly the columns the scaler expects
                     X_for_scaler = pd.DataFrame(index=[0])
-                    for col in scaler_features:
+                    for col in self.scaler_features:
                         if col in X.columns:
                             X_for_scaler[col] = X[col].values[0]
                         else:
@@ -308,9 +310,11 @@ class AQIPredictionService:
                             print(f"⚠️ Missing feature: {col}, filling with 0")
                             X_for_scaler[col] = 0.0
 
-                    # Scale only these columns
+                    # Scale only these columns, maintaining order
                     X_scaled_array = self.scaler_X.transform(X_for_scaler)
-                    X_scaled = pd.DataFrame(X_scaled_array, columns=scaler_features)
+                    X_scaled = pd.DataFrame(
+                        X_scaled_array, columns=self.scaler_features
+                    )
                     final_input = X_scaled
                 else:
                     # Fallback: try all columns to scale
@@ -349,16 +353,47 @@ class AQIPredictionService:
                     pred_val = self.scaler_y.inverse_transform(pred_scaled).ravel()[0]
                     raw_pred = max(0, float(pred_val))
                 else:
-                    # Get model's expected n_features
+                    # Get model's expected n_features and feature names
                     model_n_features = getattr(self.model, "n_features_in_", None)
+
                     current_features = final_input.shape[1]
 
-                    # Pad features if needed
-                    if model_n_features and current_features < model_n_features:
+                    # If model has feature names, reorder/align to match
+                    if self.model_features is not None:
+                        if i == 0 or i % 24 == 0:  # Log only first and every 24 steps
+                            print(
+                                f"Model expects {len(self.model_features)} features: {list(self.model_features)}"
+                            )
+                            print(
+                                f"Input has {len(final_input.columns)}: {list(final_input.columns)}"
+                            )
+
+                        # Create aligned input DataFrame with features in model's expected order
+                        aligned_input = pd.DataFrame(index=[0])
+                        missing_features = []
+                        for feat in self.model_features:
+                            if feat in final_input.columns:
+                                aligned_input[feat] = final_input[feat].values[0]
+                            else:
+                                # Missing feature - fill with 0
+                                missing_features.append(feat)
+                                aligned_input[feat] = 0.0
+
+                        if missing_features:
+                            print(
+                                f"  ⚠️ Missing {len(missing_features)} features: {missing_features}"
+                            )
+
+                        final_input = aligned_input
+                        if i == 0:
+                            print(
+                                f"  ✓ Aligned input to {len(self.model_features)} features in correct order"
+                            )
+                    elif model_n_features and current_features < model_n_features:
+                        # Fallback: just pad if we don't have feature names
                         print(
                             f"⚠️ Feature count mismatch: model expects {model_n_features}, got {current_features}"
                         )
-                        # Pad with zeros
                         padding = np.zeros(
                             (final_input.shape[0], model_n_features - current_features)
                         )
